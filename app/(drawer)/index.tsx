@@ -21,7 +21,7 @@ const VERSE_OF_DAY = {
 const SECTIONS = [
   { route: '/stillness',  icon: '🕊', label: 'Watchfulness', sub: 'Prayer · feeling · anchor' },
   { route: '/scripture',  icon: '📖', label: 'Reading Plans',    sub: 'Read & track the Bible'    },
-  { route: '/rule',       icon: '✓',  label: 'Rule of Life',     sub: 'Canon · screen time'       },
+  { route: '/rule',       icon: '✓',  label: 'Canon',            sub: 'Prayer rule · Psalms · screen' },
   { route: '/confession', icon: '🙏', label: 'Confession',       sub: 'Examine · journal · log'   },
 ] as const;
 

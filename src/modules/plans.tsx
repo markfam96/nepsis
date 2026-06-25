@@ -60,10 +60,11 @@ export default function PlansBody() {
     ]);
   }, []);
 
-  // ─── Plan detail ──────────────────────────────────────────────────────────────
+  // ─── Plan detail / preview ────────────────────────────────────────────────────
   if (detailId) {
     const plan = getPlan(detailId)!;
-    const prog = progress[detailId] ?? { startedAt: new Date().toISOString(), completed: [] };
+    const started = !!progress[detailId];
+    const prog = progress[detailId] ?? { startedAt: '', completed: [] };
     const done = new Set(prog.completed);
     const cur  = currentDay(prog, plan.totalDays);
     const finished = cur > plan.totalDays;
@@ -75,18 +76,35 @@ export default function PlansBody() {
           <Text style={{ color: Colors.purple600, fontSize: 14 }}>‹ All plans</Text>
         </TouchableOpacity>
 
-        {/* Progress header */}
+        {/* Header */}
         <View style={[styles.detailHead, { backgroundColor: plan.color }]}>
           <Text style={styles.detailIcon}>{plan.icon}</Text>
           <Text style={styles.detailName}>{plan.name}</Text>
-          <Text style={styles.detailMeta}>{done.size} of {plan.totalDays} days · {pct}%</Text>
-          <View style={styles.detailBarTrack}>
-            <View style={[styles.detailBarFill, { width: `${pct}%` }]} />
-          </View>
+          {started ? (
+            <>
+              <Text style={styles.detailMeta}>{done.size} of {plan.totalDays} days · {pct}%</Text>
+              <View style={styles.detailBarTrack}>
+                <View style={[styles.detailBarFill, { width: `${pct}%` }]} />
+              </View>
+            </>
+          ) : (
+            <Text style={styles.detailMeta}>{plan.totalDays} days</Text>
+          )}
         </View>
 
-        {/* Continue card */}
-        {finished ? (
+        {/* Preview: Start button + description */}
+        {!started && (
+          <>
+            <TouchableOpacity style={styles.startTopBtn} onPress={() => startPlan(plan)}>
+              <Text style={styles.startTopBtnText}>Start this plan</Text>
+            </TouchableOpacity>
+            <Text style={[styles.previewDesc, { color: th.textSecond }]}>{plan.description}</Text>
+            <Text style={[styles.sectionLabel, { color: th.textSecond }]}>What you'll read</Text>
+          </>
+        )}
+
+        {/* Tracking: Continue card */}
+        {started && (finished ? (
           <View style={[styles.continueCard, { borderColor: Colors.teal600, backgroundColor: Colors.teal50 }]}>
             <Text style={[styles.continueLabel, { color: Colors.teal600 }]}>✦  Plan complete</Text>
             <Text style={[styles.continueReading, { color: th.text }]}>Glory to God — you finished {plan.name}.</Text>
@@ -99,37 +117,42 @@ export default function PlansBody() {
               <Text style={styles.markBtnText}>✓  Mark day {cur} complete</Text>
             </TouchableOpacity>
           </View>
-        )}
+        ))}
 
-        {/* Full schedule */}
-        <Text style={[styles.sectionLabel, { color: th.textSecond }]}>Full schedule</Text>
+        {started && <Text style={[styles.sectionLabel, { color: th.textSecond }]}>Full schedule</Text>}
+
+        {/* Schedule — interactive once started, read-only in preview */}
         {plan.days.map(d => {
           const isDone = done.has(d.day);
-          const isCurrent = d.day === cur && !finished;
+          const isCurrent = started && d.day === cur && !finished;
+          const Row = started ? TouchableOpacity : View;
           return (
-            <TouchableOpacity
+            <Row
               key={d.day}
               style={[styles.dayRow, {
                 backgroundColor: th.backgroundSecond,
                 borderColor: isCurrent ? Colors.goldAccent : th.border,
               }]}
-              onPress={() => toggleDay(plan.id, d.day)}
-              activeOpacity={0.8}
+              {...(started ? { onPress: () => toggleDay(plan.id, d.day), activeOpacity: 0.8 } : {})}
             >
               <Text style={[styles.dayNum, { color: th.textThird }]}>Day {d.day}</Text>
               <Text style={[styles.dayLabel, { color: isDone ? th.textThird : th.text }, isDone && styles.strike]}>
                 {d.label}
               </Text>
-              <View style={[styles.check, { borderColor: isDone ? Colors.teal600 : th.border, backgroundColor: isDone ? Colors.teal600 : 'transparent' }]}>
-                {isDone && <Text style={{ color: '#fff', fontSize: 12 }}>✓</Text>}
-              </View>
-            </TouchableOpacity>
+              {started && (
+                <View style={[styles.check, { borderColor: isDone ? Colors.teal600 : th.border, backgroundColor: isDone ? Colors.teal600 : 'transparent' }]}>
+                  {isDone && <Text style={{ color: '#fff', fontSize: 12 }}>✓</Text>}
+                </View>
+              )}
+            </Row>
           );
         })}
 
-        <TouchableOpacity style={[styles.abandonBtn, { borderColor: th.border }]} onPress={() => abandon(plan.id)}>
-          <Text style={[styles.abandonText, { color: Colors.red600 }]}>Abandon plan</Text>
-        </TouchableOpacity>
+        {started && (
+          <TouchableOpacity style={[styles.abandonBtn, { borderColor: th.border }]} onPress={() => abandon(plan.id)}>
+            <Text style={[styles.abandonText, { color: Colors.red600 }]}>Abandon plan</Text>
+          </TouchableOpacity>
+        )}
       </ScrollView>
     );
   }
@@ -210,22 +233,24 @@ export default function PlansBody() {
         {!loading && tab === 'browse' && READING_PLANS.map(plan => {
           const started = !!progress[plan.id];
           return (
-            <View key={plan.id} style={[styles.browseCard, { backgroundColor: th.backgroundSecond, borderColor: th.border }]}>
+            <TouchableOpacity
+              key={plan.id}
+              style={[styles.browseCard, { backgroundColor: th.backgroundSecond, borderColor: th.border }]}
+              onPress={() => setDetailId(plan.id)}
+              activeOpacity={0.85}
+            >
               <View style={[styles.planIconWrap, { backgroundColor: plan.color + '22' }]}>
                 <Text style={styles.planIcon}>{plan.icon}</Text>
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.planName, { color: th.text }]}>{plan.name}</Text>
                 <Text style={[styles.planDesc, { color: th.textSecond }]}>{plan.description}</Text>
-                <Text style={[styles.planDays, { color: plan.color }]}>{plan.totalDays} days</Text>
+                <Text style={[styles.planDays, { color: plan.color }]}>
+                  {plan.totalDays} days{started ? '  ·  in progress' : ''}
+                </Text>
               </View>
-              <TouchableOpacity
-                style={[styles.startBtn, { backgroundColor: plan.color }]}
-                onPress={() => startPlan(plan)}
-              >
-                <Text style={styles.startBtnText}>{started ? 'Open' : 'Start'}</Text>
-              </TouchableOpacity>
-            </View>
+              <Text style={{ color: th.textThird, fontSize: 20 }}>›</Text>
+            </TouchableOpacity>
           );
         })}
       </ScrollView>
@@ -264,6 +289,11 @@ const styles = StyleSheet.create({
   emptyText:     { fontSize: 13, textAlign: 'center' },
   browseBtn:     { backgroundColor: Colors.purple600, paddingHorizontal: 24, paddingVertical: 10, borderRadius: Radius.md },
   browseBtnText: { color: Colors.gold, fontWeight: '500', fontSize: 13 },
+
+  // Preview
+  startTopBtn:   { backgroundColor: Colors.purple600, paddingVertical: 14, borderRadius: Radius.md, alignItems: 'center', marginBottom: Spacing.md },
+  startTopBtnText:{ color: Colors.gold, fontSize: 15, fontWeight: '500' },
+  previewDesc:   { fontSize: 14, lineHeight: 21, marginBottom: Spacing.sm },
 
   // Detail
   detailHead:    { borderRadius: Radius.xl, padding: Spacing.lg, marginBottom: Spacing.md },
