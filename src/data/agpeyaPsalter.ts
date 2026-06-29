@@ -36,6 +36,64 @@ export function partCount(psalm: number): number {
   return getParts(psalm).length;
 }
 
+// Memorization units: each Agpeya part is split into short, phrase-sized
+// portions so the learner takes on a small piece at a time. We break at clause
+// boundaries (commas, semicolons, colons, and sentence ends) and group up to a
+// small word target.
+const TARGET_WORDS = 11;
+const MIN_TAIL = 4;
+
+function chunk(text: string): string[] {
+  // Split into clauses, keeping the trailing punctuation with each clause.
+  const clauses = text.match(/[^,;:.!?]+[,;:.!?]*/g) ?? [text];
+  const units: string[] = [];
+  let cur = '';
+  let words = 0;
+  for (const clause of clauses) {
+    const c = clause.trim();
+    if (!c) continue;
+    cur = cur ? `${cur} ${c}` : c;
+    words += c.split(/\s+/).length;
+    if (words >= TARGET_WORDS) { units.push(cur); cur = ''; words = 0; }
+  }
+  if (cur) {
+    if (units.length && cur.split(/\s+/).length < MIN_TAIL) units[units.length - 1] += ` ${cur}`;
+    else units.push(cur);
+  }
+  return units.length ? units : [text];
+}
+
+export interface Unit { text: string; part: number; }
+
+export function getUnitList(psalm: number): Unit[] {
+  const out: Unit[] = [];
+  getParts(psalm).forEach((p, pi) => {
+    for (const t of chunk(p)) out.push({ text: t, part: pi });
+  });
+  return out;
+}
+
+export function getUnits(psalm: number): string[] {
+  return getUnitList(psalm).map(u => u.text);
+}
+
+export function unitCount(psalm: number): number {
+  return getUnitList(psalm).length;
+}
+
+// The text of the current section up to (but not including) the given unit —
+// the "lead-up" shown as context during review.
+export function leadUp(psalm: number, unitIndex: number): string {
+  const units = getUnitList(psalm);
+  const cur = units[unitIndex];
+  if (!cur) return '';
+  return units
+    .slice(0, unitIndex)
+    .filter(u => u.part === cur.part)
+    .map(u => u.text)
+    .join(' ');
+}
+
 export function psalmHours(psalm: number): string[] {
   return DATA.psalms[String(psalm)]?.hours ?? [];
 }
