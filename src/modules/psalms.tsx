@@ -12,8 +12,9 @@ import {
 import { Colors, Light, Dark, Spacing, Radius } from '../constants/theme';
 import {
   PartCard, Grade, Streak, loadCards, loadSelection, saveSelection, review,
-  computeStats, buildQueue, cardId, MASTERED_INTERVAL, loadStreak, recordReviewDay,
+  computeStats, buildQueue, cardId, loadStreak, recordReviewDay,
   loadNewPerDay, saveNewPerDay,
+  ReciteCard, ReciteGrade, loadRecite, reviewRecite, reciteState, portionsMature,
 } from '../services/psalmStore';
 
 // Cloze deletion: show the opening of a passage and blank out the completion,
@@ -55,6 +56,10 @@ export default function PsalmsBody() {
   const [view, setView]     = useState<'overview' | 'manage'>('overview');
   const [reader, setReader] = useState<number | null>(null);
 
+  const [recite, setRecite] = useState<Record<number, ReciteCard>>({});
+  const [testPsalm, setTestPsalm] = useState<number | null>(null);
+  const [testRevealed, setTestRevealed] = useState(false);
+
   const [queue, setQueue]   = useState<{ psalm: number; part: number }[] | null>(null);
   const [qIndex, setQIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
@@ -62,8 +67,8 @@ export default function PsalmsBody() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    Promise.all([loadSelection(), loadCards(), loadStreak(), loadNewPerDay()]).then(([sel, c, st, npd]) => {
-      setSelection(sel); setCards(c); setStreak(st); setNewPerDay(npd);
+    Promise.all([loadSelection(), loadCards(), loadStreak(), loadNewPerDay(), loadRecite()]).then(([sel, c, st, npd, rec]) => {
+      setSelection(sel); setCards(c); setStreak(st); setNewPerDay(npd); setRecite(rec);
     }).finally(() => setLoading(false));
   }, []);
 
@@ -96,6 +101,16 @@ export default function PsalmsBody() {
     setNewPerDay(clamped);
     saveNewPerDay(clamped);
   }, []);
+
+  const openTest = useCallback((p: number) => { setTestPsalm(p); setTestRevealed(false); }, []);
+
+  const finishTest = useCallback(async (g: ReciteGrade) => {
+    if (testPsalm == null) return;
+    const updated = await reviewRecite(testPsalm, recite[testPsalm], g);
+    setRecite(prev => ({ ...prev, [testPsalm]: updated }));
+    recordReviewDay().then(setStreak);
+    setTestPsalm(null);
+  }, [testPsalm, recite]);
 
   const grade = useCallback(async (g: Grade) => {
     if (!queue || busy) return;
@@ -167,6 +182,53 @@ export default function PsalmsBody() {
     );
   }
 
+  // ─── Whole-psalm recitation test ──────────────────────────────────────────────
+  if (testPsalm != null) {
+    const sections = getParts(testPsalm);
+    const meta = CATEGORY_META[classify(testPsalm)];
+    return (
+      <View style={{ flex: 1, backgroundColor: th.background }}>
+        <View style={styles.sessionTop}>
+          <Text style={[styles.sessionProgress, { color: th.textThird }]}>Full recitation</Text>
+          <TouchableOpacity onPress={() => setTestPsalm(null)}><Text style={{ color: Colors.purple600, fontSize: 14 }}>End</Text></TouchableOpacity>
+        </View>
+        <View style={styles.sessionHead}>
+          <Text style={[styles.sessionTitle, { color: th.text }]}>Psalm {testPsalm}</Text>
+          <Text style={[styles.newTag, { color: meta.color }]}>Recite the whole psalm from memory</Text>
+        </View>
+
+        <ScrollView contentContainerStyle={{ padding: Spacing.lg }}>
+          {testRevealed ? (
+            sections.map((t, i) => (
+              <View key={i} style={{ marginBottom: Spacing.md }}>
+                {sections.length > 1 && <Text style={[styles.partLabel, { color: meta.color }]}>Section {i + 1} of {sections.length}</Text>}
+                <Text style={[styles.psalmText, { color: th.text }]}>{t}</Text>
+              </View>
+            ))
+          ) : (
+            <Text style={[styles.testPrompt, { color: th.textSecond }]}>
+              Recite Psalm {testPsalm} aloud in full, then reveal the text to check yourself.
+            </Text>
+          )}
+        </ScrollView>
+
+        <View style={styles.sessionFoot}>
+          {!testRevealed ? (
+            <TouchableOpacity style={styles.revealBtn} onPress={() => setTestRevealed(true)}>
+              <Text style={styles.revealBtnText}>Reveal text</Text>
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.gradeRow}>
+              <Grade2 label="Forgot"      color={Colors.red600} onPress={() => finishTest('fail')} />
+              <Grade2 label="Some slips"  color="#C4821A"        onPress={() => finishTest('partial')} />
+              <Grade2 label="✓ Recited"   color={Colors.teal600} onPress={() => finishTest('pass')} />
+            </View>
+          )}
+        </View>
+      </View>
+    );
+  }
+
   // ─── Review session ─────────────────────────────────────────────────────────
   if (queue) {
     const { psalm, part } = queue[qIndex];
@@ -210,7 +272,7 @@ export default function PsalmsBody() {
             </TouchableOpacity>
           ) : (
             <View style={[styles.gradeRow, busy && { opacity: 0.5 }]} pointerEvents={busy ? 'none' : 'auto'}>
-              <Grade2 label="Again" color={Colors.red600} onPress={() => grade('again')} />
+              <Grade2 label="Wrong" color={Colors.red600} onPress={() => grade('again')} />
               <Grade2 label="Hard"  color="#C4821A"        onPress={() => grade('hard')} />
               <Grade2 label="Good"  color={Colors.teal600} onPress={() => grade('good')} />
               <Grade2 label="Easy"  color="#1F4E8C"        onPress={() => grade('easy')} />
@@ -354,20 +416,34 @@ export default function PsalmsBody() {
           </View>
 
           {selection.map(p => {
-            const parts = unitCount(p);
-            let mastered = 0;
-            for (let i = 0; i < parts; i++) {
-              const c = cards[cardId(p, i)];
-              if (c && c.intervalDays >= MASTERED_INTERVAL) mastered++;
-            }
+            const { mature, total } = portionsMature(p, cards);
+            const st = reciteState(p, cards, recite);
+            const sub =
+              st === 'learning'  ? `${mature}/${total} portions memorized`
+              : st === 'ready'   ? 'All portions memorized — ready to test'
+              : st === 'retest'  ? 'Whole-psalm re-test due'
+              : '✓ Memorized — recited in full';
+            const subColor =
+              st === 'memorized' ? Colors.teal600
+              : st === 'retest'  ? Colors.amber600
+              : st === 'ready'   ? Colors.purple600
+              : th.textThird;
             return (
-              <TouchableOpacity key={p} style={[styles.row, { backgroundColor: th.backgroundSecond, borderColor: th.border }]} onPress={() => setReader(p)}>
-                <View style={{ flex: 1 }}>
+              <View key={p} style={[styles.row, { backgroundColor: th.backgroundSecond, borderColor: th.border }]}>
+                <TouchableOpacity style={{ flex: 1 }} onPress={() => setReader(p)}>
                   <Text style={[styles.rowTitle, { color: th.text }]}>Psalm {p}</Text>
-                  <Text style={[styles.rowSub, { color: th.textThird }]}>{mastered}/{parts} memorized</Text>
-                </View>
-                <CategoryTag psalm={p} />
-              </TouchableOpacity>
+                  <Text style={[styles.rowSub, { color: subColor }]}>{sub}</Text>
+                </TouchableOpacity>
+                {st === 'ready' || st === 'retest' ? (
+                  <TouchableOpacity style={styles.testBtn} onPress={() => openTest(p)}>
+                    <Text style={styles.testBtnText}>Test</Text>
+                  </TouchableOpacity>
+                ) : st === 'memorized' ? (
+                  <Text style={styles.crown}>✓</Text>
+                ) : (
+                  <CategoryTag psalm={p} />
+                )}
+              </View>
             );
           })}
         </>
@@ -455,6 +531,10 @@ const styles = StyleSheet.create({
   sessionHead:   { paddingHorizontal: Spacing.lg, paddingTop: Spacing.sm },
   sessionTitle:  { fontSize: 17, fontWeight: '500' },
   newTag:        { fontSize: 11, fontWeight: '500', letterSpacing: 0.5, marginTop: 4 },
+  testPrompt:    { fontSize: 15, lineHeight: 24, textAlign: 'center', paddingVertical: 40, paddingHorizontal: Spacing.md },
+  testBtn:       { backgroundColor: Colors.purple600, paddingHorizontal: 16, paddingVertical: 8, borderRadius: Radius.md },
+  testBtnText:   { color: Colors.gold, fontSize: 13, fontWeight: '500' },
+  crown:         { color: Colors.teal600, fontSize: 18, fontWeight: '500', paddingHorizontal: 6 },
   cueBox:        { paddingTop: 40, alignItems: 'center' },
   cueLabel:      { fontSize: 11, fontWeight: '500', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 12 },
   cueText:       { fontSize: 19, lineHeight: 30, fontStyle: 'italic', textAlign: 'center' },

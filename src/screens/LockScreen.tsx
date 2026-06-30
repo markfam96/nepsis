@@ -15,7 +15,6 @@ import {
 import { Colors, Light, Dark, Radius, Spacing } from '../constants/theme';
 import CopticCross from '../components/CopticCross';
 import {
-  attemptUnlock,
   verifyPIN,
   getBiometricCapability,
   authenticateWithBiometrics,
@@ -36,21 +35,21 @@ export default function LockScreen({ onUnlocked }: Props) {
   const [bioType, setBioType] = useState<'face'|'fingerprint'|'none'>('none');
   const [shake, setShake]     = useState(false);
 
-  // Auto-trigger biometric on mount
+  // Detect biometric capability so we can offer the Face ID / fingerprint
+  // shortcut — but do NOT auto-prompt. The PIN pad is the default.
   useEffect(() => {
     (async () => {
       const { available, type } = await getBiometricCapability();
       setBioType(available ? type : 'none');
-      if (available) {
-        const result = await attemptUnlock();
-        if (result === 'success') onUnlocked();
-      }
     })();
   }, []);
 
   const triggerBiometric = useCallback(async () => {
     const result = await authenticateWithBiometrics('Unlock Nepsis');
     if (result.success) onUnlocked();
+    else if (result.error && result.error !== 'cancelled') {
+      setError('Face ID unavailable — enter your PIN.');
+    }
   }, [onUnlocked]);
 
   const handlePad = useCallback(async (key: string) => {

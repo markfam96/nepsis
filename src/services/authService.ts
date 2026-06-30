@@ -46,9 +46,8 @@ export async function authenticateWithBiometrics(
   try {
     const result = await LocalAuthentication.authenticateAsync({
       promptMessage: reason,
-      cancelLabel: 'Use PIN instead',
-      disableDeviceFallback: false,   // allow device PIN/password as fallback
-      fallbackLabel: 'Use PIN',
+      cancelLabel: 'Use app PIN',
+      disableDeviceFallback: true,    // never fall back to the iPhone passcode
     });
 
     if (result.success) {

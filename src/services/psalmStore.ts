@@ -57,6 +57,13 @@ async function getDB(): Promise<SQLite.SQLiteDatabase> {
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS psalm_recite (
+      psalm    INTEGER PRIMARY KEY,
+      reps     INTEGER NOT NULL,
+      interval INTEGER NOT NULL,
+      due      TEXT NOT NULL,
+      last     TEXT NOT NULL
+    );
   `);
   return _db;
 }
@@ -216,6 +223,83 @@ export async function loadStreak(): Promise<Streak> {
   const row = await db.getFirstAsync<{ value: string }>(`SELECT value FROM psalm_meta WHERE key = 'streak'`);
   if (!row) return { current: 0, last: null };
   try { return JSON.parse(row.value) as Streak; } catch { return { current: 0, last: null }; }
+}
+
+// ─── Whole-psalm recitation test ──────────────────────────────────────────────
+// A psalm graduates to a full-recitation test once all its portions are mature.
+// Passing schedules a periodic re-test so whole-psalm recall stays fresh.
+
+export type ReciteState = 'learning' | 'ready' | 'memorized' | 'retest';
+
+export interface ReciteCard {
+  psalm: number;
+  reps: number;          // successful full recitations
+  intervalDays: number;
+  due: string;
+  last: string;
+}
+
+export function portionsMature(psalm: number, cards: Record<string, PartCard>): { mature: number; total: number } {
+  const total = segmentCount(psalm);
+  let mature = 0;
+  for (let i = 0; i < total; i++) {
+    const c = cards[cardId(psalm, i)];
+    if (c && c.intervalDays >= MASTERED_INTERVAL) mature++;
+  }
+  return { mature, total };
+}
+
+export function reciteState(psalm: number, cards: Record<string, PartCard>, recite: Record<number, ReciteCard>): ReciteState {
+  const { mature, total } = portionsMature(psalm, cards);
+  if (total === 0 || mature < total) return 'learning';
+  const r = recite[psalm];
+  if (!r || r.reps === 0) return 'ready';
+  return r.due <= todayStr() ? 'retest' : 'memorized';
+}
+
+export async function loadRecite(): Promise<Record<number, ReciteCard>> {
+  const db = await getDB();
+  const rows = await db.getAllAsync<{ psalm: number; reps: number; interval: number; due: string; last: string }>(
+    `SELECT psalm, reps, interval, due, last FROM psalm_recite`,
+  );
+  const map: Record<number, ReciteCard> = {};
+  for (const r of rows) map[r.psalm] = { psalm: r.psalm, reps: r.reps, intervalDays: r.interval, due: r.due, last: r.last };
+  return map;
+}
+
+// Re-test schedule for whole-psalm recitation. Starts short (like a portion
+// card) and lengthens as the psalm proves durable.
+const RECITE_LADDER = [1, 3, 7, 16, 35, 75, 150, 365];
+
+export type ReciteGrade = 'pass' | 'partial' | 'fail';
+
+const ladderInterval = (reps: number) =>
+  reps <= 0 ? 0 : RECITE_LADDER[Math.min(reps - 1, RECITE_LADDER.length - 1)];
+
+export async function reviewRecite(psalm: number, existing: ReciteCard | undefined, grade: ReciteGrade): Promise<ReciteCard> {
+  let reps = existing?.reps ?? 0;
+  let intervalDays: number;
+  if (grade === 'pass') {
+    reps += 1;                                  // advance a rung
+    intervalDays = ladderInterval(reps);
+  } else if (grade === 'partial') {
+    reps = Math.max(1, reps - 1);               // step back, keep some progress
+    intervalDays = ladderInterval(reps);
+  } else {
+    reps = 0;                                   // full reset — re-test next session
+    intervalDays = 0;
+  }
+  const card: ReciteCard = {
+    psalm, reps, intervalDays,
+    due: intervalDays <= 0 ? todayStr() : addDaysStr(intervalDays),
+    last: todayStr(),
+  };
+  const db = await getDB();
+  await db.runAsync(
+    `INSERT OR REPLACE INTO psalm_recite (psalm, reps, interval, due, last) VALUES (?, ?, ?, ?, ?)`,
+    [psalm, card.reps, card.intervalDays, card.due, card.last],
+  );
+  return card;
 }
 
 // Call once when a review is completed; advances the streak if it's a new day.
