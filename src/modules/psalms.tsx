@@ -4,16 +4,17 @@
 // Long Psalm 118 is broken into its 22 sections. Spaced repetition brings each
 // passage back just as you're about to forget it.
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  View, Text, ScrollView, TouchableOpacity, TextInput,
+  View, Text, ScrollView, TouchableOpacity,
   StyleSheet, ActivityIndicator, useColorScheme,
+  NativeSyntheticEvent, NativeScrollEvent,
 } from 'react-native';
 import { Colors, Light, Dark, Spacing, Radius } from '../constants/theme';
 import {
   PartCard, Grade, Streak, loadCards, loadSelection, saveSelection, review,
   computeStats, buildQueue, cardId, loadStreak, recordReviewDay,
-  loadNewPerDay, saveNewPerDay,
+  loadNewPerDay, saveNewPerDay, learningPsalm,
   ReciteCard, ReciteGrade, loadRecite, reviewRecite, reciteState, portionsMature,
 } from '../services/psalmStore';
 
@@ -97,7 +98,7 @@ export default function PsalmsBody() {
   }, [selection, cards, newPerDay]);
 
   const changeNewPerDay = useCallback((n: number) => {
-    const clamped = Math.max(0, Math.min(99, n));
+    const clamped = Math.max(1, Math.min(100, n));
     setNewPerDay(clamped);
     saveNewPerDay(clamped);
   }, []);
@@ -387,39 +388,22 @@ export default function PsalmsBody() {
           </TouchableOpacity>
 
           {/* New cards per day */}
-          <Text style={[styles.sectionLabel, { color: th.textSecond, marginBottom: Spacing.sm }]}>New passages per day</Text>
-          <View style={styles.npdRow}>
-            <TouchableOpacity style={[styles.npdStep, { borderColor: th.border }]} onPress={() => changeNewPerDay(newPerDay - 1)}>
-              <Text style={[styles.npdStepText, { color: Colors.purple600 }]}>−</Text>
-            </TouchableOpacity>
-            <TextInput
-              style={[styles.npdInput, { color: th.text, borderColor: th.border }]}
-              keyboardType="number-pad"
-              value={String(newPerDay)}
-              selectTextOnFocus
-              maxLength={2}
-              onChangeText={t => {
-                const n = parseInt(t.replace(/[^0-9]/g, ''), 10);
-                if (!Number.isNaN(n)) changeNewPerDay(n);
-                else if (t === '') setNewPerDay(0);
-              }}
-            />
-            <TouchableOpacity style={[styles.npdStep, { borderColor: th.border }]} onPress={() => changeNewPerDay(newPerDay + 1)}>
-              <Text style={[styles.npdStepText, { color: Colors.purple600 }]}>+</Text>
-            </TouchableOpacity>
-            <Text style={[styles.npdHint, { color: th.textThird }]}>new passages each day</Text>
-          </View>
+          <Text style={[styles.sectionLabel, { color: th.textSecond, marginBottom: Spacing.xs }]}>Number of new cards per day</Text>
+          <NumberPicker value={newPerDay} onScrub={setNewPerDay} onCommit={changeNewPerDay} min={1} max={100} th={th} />
+          <View style={{ marginBottom: Spacing.lg }} />
 
           <View style={styles.listHead}>
             <Text style={[styles.sectionLabel, { color: th.textSecond }]}>My psalms</Text>
             <TouchableOpacity onPress={() => setView('manage')}><Text style={{ color: Colors.purple600, fontSize: 13, fontWeight: '500' }}>Manage</Text></TouchableOpacity>
           </View>
 
-          {selection.map(p => {
+          {(() => { const lp = learningPsalm(selection, cards); return selection.map(p => {
             const { mature, total } = portionsMature(p, cards);
             const st = reciteState(p, cards, recite);
+            const hasStarted = Array.from({ length: total }).some((_, i) => cards[cardId(p, i)]);
             const sub =
-              st === 'learning'  ? `${mature}/${total} portions memorized`
+              st === 'learning'
+                ? (p === lp ? `Learning now · ${mature}/${total} portions` : !hasStarted ? 'Up next — finish earlier psalms first' : `${mature}/${total} portions memorized`)
               : st === 'ready'   ? 'All portions memorized — ready to test'
               : st === 'retest'  ? 'Whole-psalm re-test due'
               : '✓ Memorized — recited in full';
@@ -427,6 +411,7 @@ export default function PsalmsBody() {
               st === 'memorized' ? Colors.teal600
               : st === 'retest'  ? Colors.amber600
               : st === 'ready'   ? Colors.purple600
+              : p === lp         ? Colors.purple600
               : th.textThird;
             return (
               <View key={p} style={[styles.row, { backgroundColor: th.backgroundSecond, borderColor: th.border }]}>
@@ -445,10 +430,55 @@ export default function PsalmsBody() {
                 )}
               </View>
             );
-          })}
+          }); })()}
         </>
       )}
     </ScrollView>
+  );
+}
+
+const PICKER_ITEM = 56;
+
+function NumberPicker({ value, onScrub, onCommit, min, max, th }: {
+  value: number; onScrub: (n: number) => void; onCommit: (n: number) => void;
+  min: number; max: number; th: any;
+}) {
+  const nums = Array.from({ length: max - min + 1 }, (_, i) => min + i);
+  const ref = useRef<ScrollView>(null);
+  const [w, setW] = useState(0);
+  const pad = w > 0 ? (w - PICKER_ITEM) / 2 : 0;
+
+  // Centre the current value once we know the container width.
+  useEffect(() => {
+    if (w > 0) ref.current?.scrollTo({ x: (value - min) * PICKER_ITEM, animated: false });
+  }, [w]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const numberAt = (x: number) => {
+    const i = Math.max(0, Math.min(nums.length - 1, Math.round(x / PICKER_ITEM)));
+    return nums[i];
+  };
+
+  return (
+    <View onLayout={e => setW(e.nativeEvent.layout.width)} style={styles.pickerWrap}>
+      <View pointerEvents="none" style={[styles.pickerHighlight, { borderColor: Colors.goldAccent }]} />
+      <ScrollView
+        ref={ref}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        snapToInterval={PICKER_ITEM}
+        decelerationRate="fast"
+        contentContainerStyle={{ paddingHorizontal: pad }}
+        scrollEventThrottle={16}
+        onScroll={(e: NativeSyntheticEvent<NativeScrollEvent>) => onScrub(numberAt(e.nativeEvent.contentOffset.x))}
+        onMomentumScrollEnd={(e: NativeSyntheticEvent<NativeScrollEvent>) => onCommit(numberAt(e.nativeEvent.contentOffset.x))}
+      >
+        {nums.map(n => (
+          <View key={n} style={styles.pickerItem}>
+            <Text style={{ fontSize: n === value ? 26 : 18, fontWeight: '500', color: n === value ? Colors.purple600 : th.textThird }}>{n}</Text>
+          </View>
+        ))}
+      </ScrollView>
+    </View>
   );
 }
 
@@ -491,11 +521,9 @@ const styles = StyleSheet.create({
 
   reviewBtn:     { paddingVertical: 16, borderRadius: Radius.md, alignItems: 'center', marginBottom: Spacing.lg },
   reviewBtnText: { fontSize: 16, fontWeight: '500' },
-  npdRow:        { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginBottom: Spacing.lg },
-  npdStep:       { width: 40, height: 40, borderRadius: Radius.md, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
-  npdStepText:   { fontSize: 22, fontWeight: '500' },
-  npdInput:      { width: 56, height: 40, borderRadius: Radius.md, borderWidth: 1, textAlign: 'center', fontSize: 16, fontWeight: '500' },
-  npdHint:       { fontSize: 12, flex: 1 },
+  pickerWrap:      { height: 56, justifyContent: 'center' },
+  pickerHighlight: { position: 'absolute', left: '50%', marginLeft: -PICKER_ITEM / 2, width: PICKER_ITEM, height: 44, borderRadius: Radius.md, borderWidth: 1.5 },
+  pickerItem:      { width: PICKER_ITEM, height: 56, alignItems: 'center', justifyContent: 'center' },
 
   listHead:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.sm },
   sectionLabel:  { fontSize: 11, fontWeight: '500', textTransform: 'uppercase', letterSpacing: 0.5 },

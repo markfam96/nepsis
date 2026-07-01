@@ -179,24 +179,43 @@ export function computeStats(selection: number[], cards: Record<string, PartCard
 
 // Today's queue: due review parts (in selection order), then up to
 // NEW_PER_SESSION brand-new parts from the selected psalms, in order.
+// The psalm currently being learned: the first in the user's order that isn't
+// yet fully memorized (some portion not mature). New cards are drawn only from
+// it, so the user learns one psalm at a time — and the next psalm doesn't begin
+// until the current one is fully learned.
+export function learningPsalm(selection: number[], cards: Record<string, PartCard>): number | null {
+  for (const p of selection) {
+    const { mature, total } = portionsMature(p, cards);
+    if (total > 0 && mature < total) return p;
+  }
+  return null;
+}
+
 export function buildQueue(
   selection: number[],
   cards: Record<string, PartCard>,
   newLimit: number = NEW_PER_SESSION,
 ): { psalm: number; part: number }[] {
+  // Due reviews come from every learned psalm.
   const due: { psalm: number; part: number }[] = [];
-  const fresh: { psalm: number; part: number }[] = [];
   for (const p of selection) {
     const parts = segmentCount(p);
     for (let i = 0; i < parts; i++) {
       const c = cards[cardId(p, i)];
-      if (!c) {
-        if (fresh.length < newLimit) fresh.push({ psalm: p, part: i });
-      } else if (isDue(c)) {
-        due.push({ psalm: p, part: i });
-      }
+      if (c && isDue(c)) due.push({ psalm: p, part: i });
     }
   }
+
+  // New portions come only from the one psalm currently being learned.
+  const fresh: { psalm: number; part: number }[] = [];
+  const lp = learningPsalm(selection, cards);
+  if (lp != null) {
+    const parts = segmentCount(lp);
+    for (let i = 0; i < parts && fresh.length < newLimit; i++) {
+      if (!cards[cardId(lp, i)]) fresh.push({ psalm: lp, part: i });
+    }
+  }
+
   return [...due.slice(0, MAX_REVIEWS_PER_SESSION), ...fresh];
 }
 
