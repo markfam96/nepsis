@@ -1,9 +1,10 @@
 // src/services/psalmStore.ts
-// Spaced-repetition store for memorizing the Psalms, one passage ("part") at a
-// time. Persisted with AsyncStorage (reliable in Expo Go and dev/prod builds).
+// Spaced-repetition store for memorizing the Psalms. The unit of selection and
+// tracking is an "item" — either a whole psalm ("5") or a single section of
+// Psalm 118 ("118#3"). Persisted with AsyncStorage.
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { unitCount as segmentCount } from '../data/agpeyaPsalter';
+import { itemUnitCount as unitCount } from '../data/agpeyaPsalter';
 
 const K_SELECTION = 'nepsis.psalm.selection';
 const K_CARDS     = 'nepsis.psalm.cards';
@@ -11,7 +12,7 @@ const K_RECITE    = 'nepsis.psalm.recite';
 const K_STREAK    = 'nepsis.psalm.streak';
 const K_NEWPERDAY = 'nepsis.psalm.newPerDay';
 
-export const NEW_PER_SESSION = 5;        // default new cards/day
+export const NEW_PER_SESSION = 5;
 export const NEW_PER_DAY_OPTIONS = [1, 3, 5, 10, 15, 20];
 export const MAX_REVIEWS_PER_SESSION = 20;
 export const MASTERED_INTERVAL = 21; // days — a part is considered "mature"
@@ -19,7 +20,7 @@ export const MASTERED_INTERVAL = 21; // days — a part is considered "mature"
 export type Grade = 'again' | 'hard' | 'good' | 'easy';
 
 export interface PartCard {
-  psalm: number;
+  item: string;
   part: number;
   reps: number;
   intervalDays: number;
@@ -27,7 +28,7 @@ export interface PartCard {
   due: string;   // YYYY-MM-DD
 }
 
-export const cardId = (psalm: number, part: number) => `${psalm}:${part}`;
+export const cardId = (item: string, part: number) => `${item}:${part}`;
 
 function todayStr(): string { return new Date().toISOString().slice(0, 10); }
 function addDaysStr(days: number): string {
@@ -48,18 +49,18 @@ async function writeJSON(key: string, value: unknown): Promise<void> {
   try { await AsyncStorage.setItem(key, JSON.stringify(value)); } catch {}
 }
 
-// ─── Selection (which psalms, in what order) ──────────────────────────────────
+// ─── Selection (which items, in what order) ───────────────────────────────────
 
-export async function loadSelection(): Promise<number[]> {
-  return readJSON<number[]>(K_SELECTION, []);
+export async function loadSelection(): Promise<string[]> {
+  const arr = await readJSON<any[]>(K_SELECTION, []);
+  return arr.map(String); // migrate legacy number[] → string ids
 }
 
-export async function saveSelection(psalms: number[]): Promise<void> {
-  await writeJSON(K_SELECTION, psalms);
+export async function saveSelection(items: string[]): Promise<void> {
+  await writeJSON(K_SELECTION, items);
 }
 
 // ─── Cards ────────────────────────────────────────────────────────────────────
-// Cached in-memory so each review writes the full map back atomically.
 
 let _cards: Record<string, PartCard> | null = null;
 
@@ -72,7 +73,7 @@ export async function loadCards(): Promise<Record<string, PartCard>> {
   return { ...(await cards()) };
 }
 
-export async function review(psalm: number, part: number, existing: PartCard | undefined, grade: Grade): Promise<PartCard> {
+export async function review(item: string, part: number, existing: PartCard | undefined, grade: Grade): Promise<PartCard> {
   let reps = existing?.reps ?? 0;
   let prev = existing?.intervalDays ?? 0;
   let ease = existing?.ease ?? 2.5;
@@ -102,14 +103,14 @@ export async function review(psalm: number, part: number, existing: PartCard | u
       break;
   }
 
-  const card: PartCard = { psalm, part, reps, intervalDays, ease, due: addDaysStr(intervalDays) };
+  const card: PartCard = { item, part, reps, intervalDays, ease, due: addDaysStr(intervalDays) };
   const map = await cards();
-  map[cardId(psalm, part)] = card;
+  map[cardId(item, part)] = card;
   await writeJSON(K_CARDS, map);
   return card;
 }
 
-// ─── Queue & stats (scoped to the selected psalms) ────────────────────────────
+// ─── Queue & stats (scoped to the selected items) ─────────────────────────────
 
 export function isDue(card: PartCard): boolean {
   return card.due <= todayStr();
@@ -123,13 +124,13 @@ export interface PsalmStats {
   dueToday: number;
 }
 
-export function computeStats(selection: number[], cardMap: Record<string, PartCard>): PsalmStats {
+export function computeStats(selection: string[], cardMap: Record<string, PartCard>): PsalmStats {
   let totalParts = 0, learning = 0, mastered = 0, dueToday = 0, started = 0;
-  for (const p of selection) {
-    const parts = segmentCount(p);
+  for (const it of selection) {
+    const parts = unitCount(it);
     totalParts += parts;
     for (let i = 0; i < parts; i++) {
-      const c = cardMap[cardId(p, i)];
+      const c = cardMap[cardId(it, i)];
       if (!c) continue;
       started++;
       if (c.intervalDays >= MASTERED_INTERVAL) mastered++; else learning++;
@@ -139,88 +140,84 @@ export function computeStats(selection: number[], cardMap: Record<string, PartCa
   return { totalParts, newCount: totalParts - started, learning, mastered, dueToday };
 }
 
-// A psalm is "worked through" once every portion has been introduced and
-// answered correctly at least once — i.e. no portion is still being missed
-// (reps >= 1 for all). New cards for the next psalm don't begin until then.
-export function workedThrough(psalm: number, cardMap: Record<string, PartCard>): boolean {
-  const total = segmentCount(psalm);
+export function portionsMature(item: string, cardMap: Record<string, PartCard>): { mature: number; total: number } {
+  const total = unitCount(item);
+  let mature = 0;
+  for (let i = 0; i < total; i++) {
+    const c = cardMap[cardId(item, i)];
+    if (c && c.intervalDays >= MASTERED_INTERVAL) mature++;
+  }
+  return { mature, total };
+}
+
+// An item is "worked through" once every portion has been answered correctly at
+// least once (reps >= 1). New cards for the next item don't begin until then.
+export function workedThrough(item: string, cardMap: Record<string, PartCard>): boolean {
+  const total = unitCount(item);
   if (total === 0) return true;
   for (let i = 0; i < total; i++) {
-    const c = cardMap[cardId(psalm, i)];
+    const c = cardMap[cardId(item, i)];
     if (!c || c.reps < 1) return false;
   }
   return true;
 }
 
-// The psalm currently being learned: the first in the user's order that hasn't
-// been fully worked through yet. New cards are drawn only from it, in order —
-// but the next psalm can begin as soon as this one is worked through (which can
-// happen the same day), so you may learn several psalms in a day.
-export function learningPsalm(selection: number[], cardMap: Record<string, PartCard>): number | null {
-  for (const p of selection) {
-    if (!workedThrough(p, cardMap)) return p;
+// The item currently being learned: the first in order not yet worked through.
+export function learningItem(selection: string[], cardMap: Record<string, PartCard>): string | null {
+  for (const it of selection) {
+    if (!workedThrough(it, cardMap)) return it;
   }
   return null;
 }
 
 export function buildQueue(
-  selection: number[],
+  selection: string[],
   cardMap: Record<string, PartCard>,
   newLimit: number = NEW_PER_SESSION,
-): { psalm: number; part: number }[] {
-  const due: { psalm: number; part: number }[] = [];
-  for (const p of selection) {
-    const parts = segmentCount(p);
+): { item: string; part: number }[] {
+  const due: { item: string; part: number }[] = [];
+  for (const it of selection) {
+    const parts = unitCount(it);
     for (let i = 0; i < parts; i++) {
-      const c = cardMap[cardId(p, i)];
-      if (c && isDue(c)) due.push({ psalm: p, part: i });
+      const c = cardMap[cardId(it, i)];
+      if (c && isDue(c)) due.push({ item: it, part: i });
     }
   }
 
-  const fresh: { psalm: number; part: number }[] = [];
-  const lp = learningPsalm(selection, cardMap);
+  const fresh: { item: string; part: number }[] = [];
+  const lp = learningItem(selection, cardMap);
   if (lp != null) {
-    const parts = segmentCount(lp);
+    const parts = unitCount(lp);
     for (let i = 0; i < parts && fresh.length < newLimit; i++) {
-      if (!cardMap[cardId(lp, i)]) fresh.push({ psalm: lp, part: i });
+      if (!cardMap[cardId(lp, i)]) fresh.push({ item: lp, part: i });
     }
   }
 
   return [...due.slice(0, MAX_REVIEWS_PER_SESSION), ...fresh];
 }
 
-// ─── Whole-psalm recitation test ──────────────────────────────────────────────
+// ─── Whole-item recitation test ───────────────────────────────────────────────
 
 export type ReciteState = 'learning' | 'ready' | 'memorized' | 'retest';
 
 export interface ReciteCard {
-  psalm: number;
+  item: string;
   reps: number;
   intervalDays: number;
   due: string;
   last: string;
 }
 
-export function portionsMature(psalm: number, cardMap: Record<string, PartCard>): { mature: number; total: number } {
-  const total = segmentCount(psalm);
-  let mature = 0;
-  for (let i = 0; i < total; i++) {
-    const c = cardMap[cardId(psalm, i)];
-    if (c && c.intervalDays >= MASTERED_INTERVAL) mature++;
-  }
-  return { mature, total };
-}
-
-export function reciteState(psalm: number, cardMap: Record<string, PartCard>, recite: Record<number, ReciteCard>): ReciteState {
-  const { mature, total } = portionsMature(psalm, cardMap);
+export function reciteState(item: string, cardMap: Record<string, PartCard>, recite: Record<string, ReciteCard>): ReciteState {
+  const { mature, total } = portionsMature(item, cardMap);
   if (total === 0 || mature < total) return 'learning';
-  const r = recite[psalm];
+  const r = recite[item];
   if (!r || r.reps === 0) return 'ready';
   return r.due <= todayStr() ? 'retest' : 'memorized';
 }
 
-export async function loadRecite(): Promise<Record<number, ReciteCard>> {
-  return readJSON<Record<number, ReciteCard>>(K_RECITE, {});
+export async function loadRecite(): Promise<Record<string, ReciteCard>> {
+  return readJSON<Record<string, ReciteCard>>(K_RECITE, {});
 }
 
 const RECITE_LADDER = [1, 3, 7, 16, 35, 75, 150, 365];
@@ -228,7 +225,7 @@ export type ReciteGrade = 'pass' | 'partial' | 'fail';
 const ladderInterval = (reps: number) =>
   reps <= 0 ? 0 : RECITE_LADDER[Math.min(reps - 1, RECITE_LADDER.length - 1)];
 
-export async function reviewRecite(psalm: number, existing: ReciteCard | undefined, grade: ReciteGrade): Promise<ReciteCard> {
+export async function reviewRecite(item: string, existing: ReciteCard | undefined, grade: ReciteGrade): Promise<ReciteCard> {
   let reps = existing?.reps ?? 0;
   let intervalDays: number;
   if (grade === 'pass') {
@@ -242,17 +239,17 @@ export async function reviewRecite(psalm: number, existing: ReciteCard | undefin
     intervalDays = 0;
   }
   const card: ReciteCard = {
-    psalm, reps, intervalDays,
+    item, reps, intervalDays,
     due: intervalDays <= 0 ? todayStr() : addDaysStr(intervalDays),
     last: todayStr(),
   };
   const map = await loadRecite();
-  map[psalm] = card;
+  map[item] = card;
   await writeJSON(K_RECITE, map);
   return card;
 }
 
-// ─── Streak (consecutive days reviewed) ───────────────────────────────────────
+// ─── Streak ───────────────────────────────────────────────────────────────────
 
 export interface Streak { current: number; last: string | null; }
 
