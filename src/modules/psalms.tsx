@@ -21,7 +21,6 @@ import {
   itemPsalm, itemReaderText, psalmHours, hourName,
 } from '../data/agpeyaPsalter';
 import { classify, CATEGORY_META } from '../data/psalmMeta';
-import DraggableFlatList, { ScaleDecorator, RenderItemParams } from 'react-native-draggable-flatlist';
 
 // Cloze deletion: show the opening, blank the completion (keep punctuation).
 function clozeText(text: string): string {
@@ -142,6 +141,14 @@ export default function PsalmsBody() {
 
   const toggle = useCallback((item: string) => {
     persistSelection(selection.includes(item) ? selection.filter(p => p !== item) : [...selection, item]);
+  }, [selection, persistSelection]);
+
+  const move = useCallback((i: number, dir: -1 | 1) => {
+    const j = i + dir;
+    if (j < 0 || j >= selection.length) return;
+    const next = [...selection];
+    [next[i], next[j]] = [next[j], next[i]];
+    persistSelection(next);
   }, [selection, persistSelection]);
 
   const changeNewPerDay = useCallback((n: number) => {
@@ -328,34 +335,32 @@ export default function PsalmsBody() {
 
   // ─── Manage ───────────────────────────────────────────────────────────────────
   if (view === 'manage') {
-    const renderSelected = ({ item, drag, isActive }: RenderItemParams<string>) => (
-      <ScaleDecorator>
-        <View style={[styles.row, { backgroundColor: th.backgroundSecond, borderColor: isActive ? Colors.goldAccent : th.border }]}>
-          <Text style={[styles.grip, { color: th.textThird }]}>≡</Text>
-          <TouchableOpacity style={{ flex: 1 }} onPress={() => setReader(item)} onLongPress={drag} delayLongPress={150}>
-            <Text style={[styles.rowTitle, { color: th.text }]}>{itemLabel(item)}</Text>
-            <Text style={[styles.rowSub, { color: th.textThird }]}>{itemUnitCount(item)} portion{itemUnitCount(item) > 1 ? 's' : ''}</Text>
-          </TouchableOpacity>
-          <CategoryTag item={item} />
-          <TouchableOpacity onPress={() => toggle(item)} hitSlop={6}><Text style={styles.remove}>✕</Text></TouchableOpacity>
-        </View>
-      </ScaleDecorator>
-    );
-
-    const header = (
-      <View>
+    return (
+      <ScrollView style={{ flex: 1, backgroundColor: th.background }} contentContainerStyle={{ padding: Spacing.lg, paddingBottom: 40 }}>
         <TouchableOpacity onPress={() => setView('overview')} style={{ marginBottom: Spacing.md }}>
           <Text style={{ color: Colors.purple600, fontSize: 14 }}>‹ Done</Text>
         </TouchableOpacity>
-        <Text style={[styles.sectionLabel, { color: th.textSecond }]}>My psalms · press & drag to reorder</Text>
+
+        <Text style={[styles.sectionLabel, { color: th.textSecond }]}>My psalms · in order</Text>
         {selection.length === 0 && (
           <Text style={[styles.muted, { color: th.textThird }]}>None chosen yet — add from the hours below.</Text>
         )}
-      </View>
-    );
+        {selection.map((item, i) => (
+          <View key={item} style={[styles.row, { backgroundColor: th.backgroundSecond, borderColor: th.border }]}>
+            <Text style={[styles.rowNum, { color: th.textThird }]}>{i + 1}</Text>
+            <TouchableOpacity style={{ flex: 1 }} onPress={() => setReader(item)}>
+              <Text style={[styles.rowTitle, { color: th.text }]}>{itemLabel(item)}</Text>
+              <Text style={[styles.rowSub, { color: th.textThird }]}>{itemUnitCount(item)} portion{itemUnitCount(item) > 1 ? 's' : ''}</Text>
+            </TouchableOpacity>
+            <CategoryTag item={item} />
+            <View style={styles.arrows}>
+              <TouchableOpacity onPress={() => move(i, -1)} hitSlop={6}><Text style={[styles.arrow, { color: i === 0 ? th.border : Colors.purple600 }]}>▲</Text></TouchableOpacity>
+              <TouchableOpacity onPress={() => move(i, 1)} hitSlop={6}><Text style={[styles.arrow, { color: i === selection.length - 1 ? th.border : Colors.purple600 }]}>▼</Text></TouchableOpacity>
+            </View>
+            <TouchableOpacity onPress={() => toggle(item)} hitSlop={6}><Text style={styles.remove}>✕</Text></TouchableOpacity>
+          </View>
+        ))}
 
-    const footer = (
-      <View>
         {HOURS.map(hour => (
           <View key={hour.key}>
             <Text style={[styles.sectionLabel, { color: th.textSecond, marginTop: Spacing.lg }]}>{hour.name}</Text>
@@ -374,21 +379,7 @@ export default function PsalmsBody() {
             })}
           </View>
         ))}
-      </View>
-    );
-
-    return (
-      <DraggableFlatList
-        style={{ flex: 1, backgroundColor: th.background }}
-        contentContainerStyle={{ padding: Spacing.lg, paddingBottom: 40 }}
-        data={selection}
-        keyExtractor={(item) => item}
-        renderItem={renderSelected}
-        onDragEnd={({ data }) => persistSelection(data)}
-        activationDistance={12}
-        ListHeaderComponent={header}
-        ListFooterComponent={footer}
-      />
+      </ScrollView>
     );
   }
 
@@ -525,7 +516,8 @@ const styles = StyleSheet.create({
   rowNum:        { fontSize: 12, fontWeight: '500', width: 20 },
   rowTitle:      { fontSize: 14, fontWeight: '500' },
   rowSub:        { fontSize: 11, marginTop: 2 },
-  grip:          { fontSize: 18, paddingHorizontal: 2 },
+  arrows:        { alignItems: 'center', justifyContent: 'center' },
+  arrow:         { fontSize: 12, paddingVertical: 1 },
   remove:        { color: Colors.red600, fontSize: 14, paddingHorizontal: 4 },
   addPlus:       { fontSize: 18, width: 20, textAlign: 'center' },
 
