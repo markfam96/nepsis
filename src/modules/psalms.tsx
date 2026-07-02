@@ -12,7 +12,7 @@ import {
 import { Colors, Light, Dark, Spacing, Radius } from '../constants/theme';
 import {
   PartCard, Grade, Streak, loadCards, loadSelection, saveSelection, review,
-  computeStats, buildQueue, cardId, loadStreak, recordReviewDay,
+  computeStats, dueQueue, newQueue, cardId, loadStreak, recordReviewDay,
   loadNewPerDay, saveNewPerDay, learningItem,
   ReciteCard, ReciteGrade, loadRecite, reviewRecite, reciteState, portionsMature,
 } from '../services/psalmStore';
@@ -169,8 +169,8 @@ export default function PsalmsBody() {
 
   const stats = computeStats(selection, cards);
 
-  const startSession = useCallback(() => {
-    const q = buildQueue(selection, cards, newPerDay);
+  const startSession = useCallback((mode: 'review' | 'new') => {
+    const q = mode === 'review' ? dueQueue(selection, cards) : newQueue(selection, cards, newPerDay);
     if (!q.length) return;
     setQueue(q); setQIndex(0); setReviewedCount(0); setRevealed(false);
   }, [selection, cards, newPerDay]);
@@ -385,7 +385,8 @@ export default function PsalmsBody() {
 
   // ─── Overview ───────────────────────────────────────────────────────────────
   const masteredPct = stats.totalParts ? Math.round((stats.mastered / stats.totalParts) * 100) : 0;
-  const queueSize = buildQueue(selection, cards, newPerDay).length;
+  const dueCount = dueQueue(selection, cards).length;
+  const newAvailable = newQueue(selection, cards, newPerDay).length;
   const lp = learningItem(selection, cards);
 
   return (
@@ -424,15 +425,30 @@ export default function PsalmsBody() {
             <Stat label="Memorized" value={stats.mastered} color={Colors.teal600} th={th} />
           </View>
 
-          <TouchableOpacity
-            style={[styles.reviewBtn, { backgroundColor: queueSize ? Colors.purple600 : th.backgroundThird }]}
-            onPress={startSession}
-            disabled={queueSize === 0}
-          >
-            <Text style={[styles.reviewBtnText, { color: queueSize ? Colors.gold : th.textThird }]}>
-              {queueSize > 0 ? `Review ${queueSize} today` : 'All caught up for today ✦'}
-            </Text>
-          </TouchableOpacity>
+          {dueCount === 0 && newAvailable === 0 ? (
+            <View style={[styles.reviewBtn, { backgroundColor: th.backgroundThird }]}>
+              <Text style={[styles.reviewBtnText, { color: th.textThird }]}>All caught up for today ✦</Text>
+            </View>
+          ) : (
+            <View style={styles.actionRow}>
+              <TouchableOpacity
+                style={[styles.actionBtn, { backgroundColor: dueCount ? Colors.purple600 : th.backgroundThird }]}
+                onPress={() => startSession('review')}
+                disabled={dueCount === 0}
+              >
+                <Text style={[styles.actionBtnText, { color: dueCount ? Colors.gold : th.textThird }]}>Review {dueCount}</Text>
+                <Text style={[styles.actionBtnSub, { color: dueCount ? Colors.goldMuted : th.textThird }]}>due today</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.actionBtn, { backgroundColor: newAvailable ? Colors.teal600 : th.backgroundThird }]}
+                onPress={() => startSession('new')}
+                disabled={newAvailable === 0}
+              >
+                <Text style={[styles.actionBtnText, { color: newAvailable ? Colors.gold : th.textThird }]}>Learn {newAvailable}</Text>
+                <Text style={[styles.actionBtnSub, { color: newAvailable ? Colors.goldMuted : th.textThird }]}>new</Text>
+              </TouchableOpacity>
+            </View>
+          )}
 
           <Text style={[styles.sectionLabel, { color: th.textSecond, marginBottom: Spacing.xs }]}>Number of new cards per day</Text>
           <NumberPicker value={newPerDay} onScrub={setNewPerDay} onCommit={changeNewPerDay} min={1} max={100} th={th} />
@@ -505,6 +521,10 @@ const styles = StyleSheet.create({
 
   reviewBtn:     { paddingVertical: 16, borderRadius: Radius.md, alignItems: 'center', marginBottom: Spacing.lg },
   reviewBtnText: { fontSize: 16, fontWeight: '500' },
+  actionRow:     { flexDirection: 'row', gap: Spacing.sm, marginBottom: Spacing.lg },
+  actionBtn:     { flex: 1, paddingVertical: 14, borderRadius: Radius.md, alignItems: 'center' },
+  actionBtnText: { fontSize: 16, fontWeight: '500' },
+  actionBtnSub:  { fontSize: 11, marginTop: 2, textTransform: 'uppercase', letterSpacing: 0.4 },
   pickerWrap:      { height: 56, justifyContent: 'center' },
   pickerHighlight: { position: 'absolute', left: '50%', marginLeft: -PICKER_ITEM / 2, width: PICKER_ITEM, height: 44, borderRadius: Radius.md, borderWidth: 1.5 },
   pickerItem:      { width: PICKER_ITEM, height: 56, alignItems: 'center', justifyContent: 'center' },

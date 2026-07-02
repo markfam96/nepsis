@@ -170,11 +170,8 @@ export function learningItem(selection: string[], cardMap: Record<string, PartCa
   return null;
 }
 
-export function buildQueue(
-  selection: string[],
-  cardMap: Record<string, PartCard>,
-  newLimit: number = NEW_PER_SESSION,
-): { item: string; part: number }[] {
+// Due review cards, from every learned item (capped).
+export function dueQueue(selection: string[], cardMap: Record<string, PartCard>): { item: string; part: number }[] {
   const due: { item: string; part: number }[] = [];
   for (const it of selection) {
     const parts = unitCount(it);
@@ -183,7 +180,11 @@ export function buildQueue(
       if (c && isDue(c)) due.push({ item: it, part: i });
     }
   }
+  return due.slice(0, MAX_REVIEWS_PER_SESSION);
+}
 
+// Brand-new cards, only from the item currently being learned, in order.
+export function newQueue(selection: string[], cardMap: Record<string, PartCard>, newLimit: number = NEW_PER_SESSION): { item: string; part: number }[] {
   const fresh: { item: string; part: number }[] = [];
   const lp = learningItem(selection, cardMap);
   if (lp != null) {
@@ -192,8 +193,15 @@ export function buildQueue(
       if (!cardMap[cardId(lp, i)]) fresh.push({ item: lp, part: i });
     }
   }
+  return fresh;
+}
 
-  return [...due.slice(0, MAX_REVIEWS_PER_SESSION), ...fresh];
+export function buildQueue(
+  selection: string[],
+  cardMap: Record<string, PartCard>,
+  newLimit: number = NEW_PER_SESSION,
+): { item: string; part: number }[] {
+  return [...dueQueue(selection, cardMap), ...newQueue(selection, cardMap, newLimit)];
 }
 
 // ─── Whole-item recitation test ───────────────────────────────────────────────
