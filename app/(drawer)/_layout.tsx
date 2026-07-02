@@ -51,6 +51,7 @@ export default function DrawerLayout() {
     >
       <Drawer.Screen name="index"      options={{ title: 'Home' }} />
       <Drawer.Screen name="stillness"  options={{ title: 'Watchfulness' }} />
+      <Drawer.Screen name="psalms"     options={{ title: 'Psalms' }} />
       <Drawer.Screen name="scripture"  options={{ title: 'Reading Plans' }} />
       <Drawer.Screen name="rule"       options={{ title: 'Canon' }} />
       <Drawer.Screen name="confession" options={{ title: 'Confession' }} />

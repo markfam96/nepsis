@@ -1,54 +1,41 @@
 // src/services/planStore.ts
-// Persists reading-plan progress on-device with expo-sqlite (non-sensitive,
-// so it lives in its own simple key-value DB).
+// Persists reading-plan progress on-device with AsyncStorage.
 
-import * as SQLite from 'expo-sqlite';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const DB_NAME = 'nepsis_plans.db';
-
-let _db: SQLite.SQLiteDatabase | null = null;
+const KEY = 'nepsis.plans.progress';
 
 export interface PlanProgress {
   startedAt: string;     // ISO
   completed: number[];   // day numbers marked done
 }
 
-async function getDB(): Promise<SQLite.SQLiteDatabase> {
-  if (_db) return _db;
-  _db = await SQLite.openDatabaseAsync(DB_NAME);
-  await _db.execAsync(`
-    PRAGMA journal_mode = WAL;
-    CREATE TABLE IF NOT EXISTS plan_progress (
-      plan_id TEXT PRIMARY KEY,
-      data    TEXT NOT NULL
-    );
-  `);
-  return _db;
+async function readAll(): Promise<Record<string, PlanProgress>> {
+  try {
+    const raw = await AsyncStorage.getItem(KEY);
+    return raw ? (JSON.parse(raw) as Record<string, PlanProgress>) : {};
+  } catch {
+    return {};
+  }
+}
+async function writeAll(map: Record<string, PlanProgress>): Promise<void> {
+  try { await AsyncStorage.setItem(KEY, JSON.stringify(map)); } catch {}
 }
 
 export async function loadAllProgress(): Promise<Record<string, PlanProgress>> {
-  const db = await getDB();
-  const rows = await db.getAllAsync<{ plan_id: string; data: string }>(
-    `SELECT plan_id, data FROM plan_progress`,
-  );
-  const map: Record<string, PlanProgress> = {};
-  for (const r of rows) {
-    try { map[r.plan_id] = JSON.parse(r.data) as PlanProgress; } catch {}
-  }
-  return map;
+  return readAll();
 }
 
 export async function saveProgress(planId: string, progress: PlanProgress): Promise<void> {
-  const db = await getDB();
-  await db.runAsync(
-    `INSERT OR REPLACE INTO plan_progress (plan_id, data) VALUES (?, ?)`,
-    [planId, JSON.stringify(progress)],
-  );
+  const map = await readAll();
+  map[planId] = progress;
+  await writeAll(map);
 }
 
 export async function removeProgress(planId: string): Promise<void> {
-  const db = await getDB();
-  await db.runAsync(`DELETE FROM plan_progress WHERE plan_id = ?`, [planId]);
+  const map = await readAll();
+  delete map[planId];
+  await writeAll(map);
 }
 
 // The current day = the first day not yet completed (1-based), capped at totalDays+1.

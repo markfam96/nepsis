@@ -1,19 +1,20 @@
 // src/services/psalmStore.ts
 // Spaced-repetition store for memorizing the Psalms, one passage ("part") at a
-// time. The user picks which psalms to learn and in what order; each part is an
-// SM-2-style card. Persisted in its own SQLite DB.
+// time. Persisted with AsyncStorage (reliable in Expo Go and dev/prod builds).
 
-import * as SQLite from 'expo-sqlite';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { unitCount as segmentCount } from '../data/agpeyaPsalter';
 
-const DB_NAME = 'nepsis_psalms.db';
+const K_SELECTION = 'nepsis.psalm.selection';
+const K_CARDS     = 'nepsis.psalm.cards';
+const K_RECITE    = 'nepsis.psalm.recite';
+const K_STREAK    = 'nepsis.psalm.streak';
+const K_NEWPERDAY = 'nepsis.psalm.newPerDay';
 
 export const NEW_PER_SESSION = 5;        // default new cards/day
 export const NEW_PER_DAY_OPTIONS = [1, 3, 5, 10, 15, 20];
 export const MAX_REVIEWS_PER_SESSION = 20;
 export const MASTERED_INTERVAL = 21; // days — a part is considered "mature"
-
-let _db: SQLite.SQLiteDatabase | null = null;
 
 export type Grade = 'again' | 'hard' | 'good' | 'easy';
 
@@ -35,81 +36,40 @@ function addDaysStr(days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-async function getDB(): Promise<SQLite.SQLiteDatabase> {
-  if (_db) return _db;
-  _db = await SQLite.openDatabaseAsync(DB_NAME);
-  await _db.execAsync(`
-    PRAGMA journal_mode = WAL;
-    CREATE TABLE IF NOT EXISTS psalm_cards (
-      card_id  TEXT PRIMARY KEY,
-      psalm    INTEGER NOT NULL,
-      part     INTEGER NOT NULL,
-      reps     INTEGER NOT NULL,
-      interval INTEGER NOT NULL,
-      ease     REAL NOT NULL,
-      due      TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS psalm_selection (
-      psalm INTEGER PRIMARY KEY,
-      ord   INTEGER NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS psalm_meta (
-      key   TEXT PRIMARY KEY,
-      value TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS psalm_recite (
-      psalm    INTEGER PRIMARY KEY,
-      reps     INTEGER NOT NULL,
-      interval INTEGER NOT NULL,
-      due      TEXT NOT NULL,
-      last     TEXT NOT NULL
-    );
-  `);
-  return _db;
+async function readJSON<T>(key: string, fallback: T): Promise<T> {
+  try {
+    const raw = await AsyncStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+async function writeJSON(key: string, value: unknown): Promise<void> {
+  try { await AsyncStorage.setItem(key, JSON.stringify(value)); } catch {}
 }
 
 // ─── Selection (which psalms, in what order) ──────────────────────────────────
 
 export async function loadSelection(): Promise<number[]> {
-  const db = await getDB();
-  const rows = await db.getAllAsync<{ psalm: number }>(
-    `SELECT psalm FROM psalm_selection ORDER BY ord ASC`,
-  );
-  return rows.map(r => r.psalm);
+  return readJSON<number[]>(K_SELECTION, []);
 }
 
 export async function saveSelection(psalms: number[]): Promise<void> {
-  const db = await getDB();
-  await db.execAsync(`DELETE FROM psalm_selection`);
-  for (let i = 0; i < psalms.length; i++) {
-    await db.runAsync(`INSERT INTO psalm_selection (psalm, ord) VALUES (?, ?)`, [psalms[i], i]);
-  }
+  await writeJSON(K_SELECTION, psalms);
 }
 
 // ─── Cards ────────────────────────────────────────────────────────────────────
+// Cached in-memory so each review writes the full map back atomically.
 
-export async function loadCards(): Promise<Record<string, PartCard>> {
-  const db = await getDB();
-  const rows = await db.getAllAsync<{ psalm: number; part: number; reps: number; interval: number; ease: number; due: string }>(
-    `SELECT psalm, part, reps, interval, ease, due FROM psalm_cards`,
-  );
-  const map: Record<string, PartCard> = {};
-  for (const r of rows) {
-    map[cardId(r.psalm, r.part)] = {
-      psalm: r.psalm, part: r.part, reps: r.reps,
-      intervalDays: r.interval, ease: r.ease, due: r.due,
-    };
-  }
-  return map;
+let _cards: Record<string, PartCard> | null = null;
+
+async function cards(): Promise<Record<string, PartCard>> {
+  if (!_cards) _cards = await readJSON<Record<string, PartCard>>(K_CARDS, {});
+  return _cards;
 }
 
-async function saveCard(c: PartCard): Promise<void> {
-  const db = await getDB();
-  await db.runAsync(
-    `INSERT OR REPLACE INTO psalm_cards (card_id, psalm, part, reps, interval, ease, due)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [cardId(c.psalm, c.part), c.psalm, c.part, c.reps, c.intervalDays, c.ease, c.due],
-  );
+export async function loadCards(): Promise<Record<string, PartCard>> {
+  return { ...(await cards()) };
 }
 
 export async function review(psalm: number, part: number, existing: PartCard | undefined, grade: Grade): Promise<PartCard> {
@@ -123,7 +83,7 @@ export async function review(psalm: number, part: number, existing: PartCard | u
     case 'again':
       ease = Math.max(1.3, ease - 0.2);
       reps = 0;
-      intervalDays = 1;                                  // relearn tomorrow
+      intervalDays = 1;
       break;
     case 'hard':
       ease = Math.max(1.3, ease - 0.15);
@@ -131,19 +91,21 @@ export async function review(psalm: number, part: number, existing: PartCard | u
       reps += 1;
       break;
     case 'good':
-      intervalDays = isNew ? 1 : Math.max(1, Math.round(prev * ease));   // ease ≈ 2.5
+      intervalDays = isNew ? 1 : Math.max(1, Math.round(prev * ease));
       reps += 1;
       break;
     case 'easy':
     default:
       ease = ease + 0.15;
-      intervalDays = isNew ? 3 : Math.max(1, Math.round(prev * ease * 1.5)); // ≈ ×4
+      intervalDays = isNew ? 3 : Math.max(1, Math.round(prev * ease * 1.5));
       reps += 1;
       break;
   }
 
   const card: PartCard = { psalm, part, reps, intervalDays, ease, due: addDaysStr(intervalDays) };
-  await saveCard(card);
+  const map = await cards();
+  map[cardId(psalm, part)] = card;
+  await writeJSON(K_CARDS, map);
   return card;
 }
 
@@ -161,13 +123,13 @@ export interface PsalmStats {
   dueToday: number;
 }
 
-export function computeStats(selection: number[], cards: Record<string, PartCard>): PsalmStats {
+export function computeStats(selection: number[], cardMap: Record<string, PartCard>): PsalmStats {
   let totalParts = 0, learning = 0, mastered = 0, dueToday = 0, started = 0;
   for (const p of selection) {
     const parts = segmentCount(p);
     totalParts += parts;
     for (let i = 0; i < parts; i++) {
-      const c = cards[cardId(p, i)];
+      const c = cardMap[cardId(p, i)];
       if (!c) continue;
       started++;
       if (c.intervalDays >= MASTERED_INTERVAL) mastered++; else learning++;
@@ -177,99 +139,80 @@ export function computeStats(selection: number[], cards: Record<string, PartCard
   return { totalParts, newCount: totalParts - started, learning, mastered, dueToday };
 }
 
-// Today's queue: due review parts (in selection order), then up to
-// NEW_PER_SESSION brand-new parts from the selected psalms, in order.
-// The psalm currently being learned: the first in the user's order that isn't
-// yet fully memorized (some portion not mature). New cards are drawn only from
-// it, so the user learns one psalm at a time — and the next psalm doesn't begin
-// until the current one is fully learned.
-export function learningPsalm(selection: number[], cards: Record<string, PartCard>): number | null {
+// A psalm is "worked through" once every portion has been introduced and
+// answered correctly at least once — i.e. no portion is still being missed
+// (reps >= 1 for all). New cards for the next psalm don't begin until then.
+export function workedThrough(psalm: number, cardMap: Record<string, PartCard>): boolean {
+  const total = segmentCount(psalm);
+  if (total === 0) return true;
+  for (let i = 0; i < total; i++) {
+    const c = cardMap[cardId(psalm, i)];
+    if (!c || c.reps < 1) return false;
+  }
+  return true;
+}
+
+// The psalm currently being learned: the first in the user's order that hasn't
+// been fully worked through yet. New cards are drawn only from it, in order —
+// but the next psalm can begin as soon as this one is worked through (which can
+// happen the same day), so you may learn several psalms in a day.
+export function learningPsalm(selection: number[], cardMap: Record<string, PartCard>): number | null {
   for (const p of selection) {
-    const { mature, total } = portionsMature(p, cards);
-    if (total > 0 && mature < total) return p;
+    if (!workedThrough(p, cardMap)) return p;
   }
   return null;
 }
 
 export function buildQueue(
   selection: number[],
-  cards: Record<string, PartCard>,
+  cardMap: Record<string, PartCard>,
   newLimit: number = NEW_PER_SESSION,
 ): { psalm: number; part: number }[] {
-  // Due reviews come from every learned psalm.
   const due: { psalm: number; part: number }[] = [];
   for (const p of selection) {
     const parts = segmentCount(p);
     for (let i = 0; i < parts; i++) {
-      const c = cards[cardId(p, i)];
+      const c = cardMap[cardId(p, i)];
       if (c && isDue(c)) due.push({ psalm: p, part: i });
     }
   }
 
-  // New portions come only from the one psalm currently being learned.
   const fresh: { psalm: number; part: number }[] = [];
-  const lp = learningPsalm(selection, cards);
+  const lp = learningPsalm(selection, cardMap);
   if (lp != null) {
     const parts = segmentCount(lp);
     for (let i = 0; i < parts && fresh.length < newLimit; i++) {
-      if (!cards[cardId(lp, i)]) fresh.push({ psalm: lp, part: i });
+      if (!cardMap[cardId(lp, i)]) fresh.push({ psalm: lp, part: i });
     }
   }
 
   return [...due.slice(0, MAX_REVIEWS_PER_SESSION), ...fresh];
 }
 
-// ─── New-cards-per-day setting ────────────────────────────────────────────────
-
-export async function loadNewPerDay(): Promise<number> {
-  const db = await getDB();
-  const row = await db.getFirstAsync<{ value: string }>(`SELECT value FROM psalm_meta WHERE key = 'newPerDay'`);
-  const n = row ? parseInt(row.value, 10) : NEW_PER_SESSION;
-  return Number.isFinite(n) ? n : NEW_PER_SESSION;
-}
-
-export async function saveNewPerDay(n: number): Promise<void> {
-  const db = await getDB();
-  await db.runAsync(`INSERT OR REPLACE INTO psalm_meta (key, value) VALUES ('newPerDay', ?)`, [String(n)]);
-}
-
-// ─── Streak (consecutive days reviewed) ───────────────────────────────────────
-
-export interface Streak { current: number; last: string | null; }
-
-export async function loadStreak(): Promise<Streak> {
-  const db = await getDB();
-  const row = await db.getFirstAsync<{ value: string }>(`SELECT value FROM psalm_meta WHERE key = 'streak'`);
-  if (!row) return { current: 0, last: null };
-  try { return JSON.parse(row.value) as Streak; } catch { return { current: 0, last: null }; }
-}
-
 // ─── Whole-psalm recitation test ──────────────────────────────────────────────
-// A psalm graduates to a full-recitation test once all its portions are mature.
-// Passing schedules a periodic re-test so whole-psalm recall stays fresh.
 
 export type ReciteState = 'learning' | 'ready' | 'memorized' | 'retest';
 
 export interface ReciteCard {
   psalm: number;
-  reps: number;          // successful full recitations
+  reps: number;
   intervalDays: number;
   due: string;
   last: string;
 }
 
-export function portionsMature(psalm: number, cards: Record<string, PartCard>): { mature: number; total: number } {
+export function portionsMature(psalm: number, cardMap: Record<string, PartCard>): { mature: number; total: number } {
   const total = segmentCount(psalm);
   let mature = 0;
   for (let i = 0; i < total; i++) {
-    const c = cards[cardId(psalm, i)];
+    const c = cardMap[cardId(psalm, i)];
     if (c && c.intervalDays >= MASTERED_INTERVAL) mature++;
   }
   return { mature, total };
 }
 
-export function reciteState(psalm: number, cards: Record<string, PartCard>, recite: Record<number, ReciteCard>): ReciteState {
-  const { mature, total } = portionsMature(psalm, cards);
+export function reciteState(psalm: number, cardMap: Record<string, PartCard>, recite: Record<number, ReciteCard>): ReciteState {
+  const { mature, total } = portionsMature(psalm, cardMap);
   if (total === 0 || mature < total) return 'learning';
   const r = recite[psalm];
   if (!r || r.reps === 0) return 'ready';
@@ -277,21 +220,11 @@ export function reciteState(psalm: number, cards: Record<string, PartCard>, reci
 }
 
 export async function loadRecite(): Promise<Record<number, ReciteCard>> {
-  const db = await getDB();
-  const rows = await db.getAllAsync<{ psalm: number; reps: number; interval: number; due: string; last: string }>(
-    `SELECT psalm, reps, interval, due, last FROM psalm_recite`,
-  );
-  const map: Record<number, ReciteCard> = {};
-  for (const r of rows) map[r.psalm] = { psalm: r.psalm, reps: r.reps, intervalDays: r.interval, due: r.due, last: r.last };
-  return map;
+  return readJSON<Record<number, ReciteCard>>(K_RECITE, {});
 }
 
-// Re-test schedule for whole-psalm recitation. Starts short (like a portion
-// card) and lengthens as the psalm proves durable.
 const RECITE_LADDER = [1, 3, 7, 16, 35, 75, 150, 365];
-
 export type ReciteGrade = 'pass' | 'partial' | 'fail';
-
 const ladderInterval = (reps: number) =>
   reps <= 0 ? 0 : RECITE_LADDER[Math.min(reps - 1, RECITE_LADDER.length - 1)];
 
@@ -299,13 +232,13 @@ export async function reviewRecite(psalm: number, existing: ReciteCard | undefin
   let reps = existing?.reps ?? 0;
   let intervalDays: number;
   if (grade === 'pass') {
-    reps += 1;                                  // advance a rung
+    reps += 1;
     intervalDays = ladderInterval(reps);
   } else if (grade === 'partial') {
-    reps = Math.max(1, reps - 1);               // step back, keep some progress
+    reps = Math.max(1, reps - 1);
     intervalDays = ladderInterval(reps);
   } else {
-    reps = 0;                                   // full reset — re-test next session
+    reps = 0;
     intervalDays = 0;
   }
   const card: ReciteCard = {
@@ -313,26 +246,37 @@ export async function reviewRecite(psalm: number, existing: ReciteCard | undefin
     due: intervalDays <= 0 ? todayStr() : addDaysStr(intervalDays),
     last: todayStr(),
   };
-  const db = await getDB();
-  await db.runAsync(
-    `INSERT OR REPLACE INTO psalm_recite (psalm, reps, interval, due, last) VALUES (?, ?, ?, ?, ?)`,
-    [psalm, card.reps, card.intervalDays, card.due, card.last],
-  );
+  const map = await loadRecite();
+  map[psalm] = card;
+  await writeJSON(K_RECITE, map);
   return card;
 }
 
-// Call once when a review is completed; advances the streak if it's a new day.
+// ─── Streak (consecutive days reviewed) ───────────────────────────────────────
+
+export interface Streak { current: number; last: string | null; }
+
+export async function loadStreak(): Promise<Streak> {
+  return readJSON<Streak>(K_STREAK, { current: 0, last: null });
+}
+
 export async function recordReviewDay(): Promise<Streak> {
-  const db = await getDB();
   const today = todayStr();
   const cur = await loadStreak();
   if (cur.last === today) return cur;
-
   const yesterday = addDaysStr(-1);
   const next: Streak = { current: cur.last === yesterday ? cur.current + 1 : 1, last: today };
-  await db.runAsync(
-    `INSERT OR REPLACE INTO psalm_meta (key, value) VALUES ('streak', ?)`,
-    [JSON.stringify(next)],
-  );
+  await writeJSON(K_STREAK, next);
   return next;
+}
+
+// ─── New-cards-per-day setting ────────────────────────────────────────────────
+
+export async function loadNewPerDay(): Promise<number> {
+  const n = await readJSON<number>(K_NEWPERDAY, NEW_PER_SESSION);
+  return Number.isFinite(n) ? n : NEW_PER_SESSION;
+}
+
+export async function saveNewPerDay(n: number): Promise<void> {
+  await writeJSON(K_NEWPERDAY, n);
 }

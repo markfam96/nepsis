@@ -11,6 +11,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useNavigation } from 'expo-router';
 import { Colors, Light, Dark, Spacing, Radius } from '../../src/constants/theme';
 import CopticCross from '../../src/components/CopticCross';
+import Harp from '../../src/components/Harp';
 import { copticToday } from '../../src/utils/copticDate';
 
 const VERSE_OF_DAY = {
@@ -19,10 +20,11 @@ const VERSE_OF_DAY = {
 };
 
 const SECTIONS = [
-  { route: '/stillness',  icon: '🕊', label: 'Watchfulness', sub: 'Prayer · feeling · anchor' },
-  { route: '/scripture',  icon: '📖', label: 'Reading Plans',    sub: 'Read & track the Bible'    },
-  { route: '/rule',       icon: '✓',  label: 'Canon',            sub: 'Prayer rule · Psalms · screen' },
-  { route: '/confession', icon: '🙏', label: 'Confession',       sub: 'Examine · journal · log'   },
+  { route: '/stillness',  icon: '🕯️', label: 'Watchfulness',  sub: 'Prayer · feeling · anchor' },
+  { route: '/psalms',     icon: '🎵', label: 'Psalms',        sub: 'Memorize the Psalter'      },
+  { route: '/scripture',  icon: '📖', label: 'Reading Plans', sub: 'Read & track the Bible'    },
+  { route: '/rule',       icon: '🙏', label: 'Canon',         sub: 'Prayer rule · screen time' },
+  { route: '/confession', icon: '🕊', label: 'Confession',    sub: 'Examine · journal · log'   },
 ] as const;
 
 export default function HomeHub() {
@@ -69,7 +71,9 @@ export default function HomeHub() {
                 activeOpacity={0.75}
                 onPress={() => router.push(card.route as any)}
               >
-                <Text style={styles.cardIcon}>{card.icon}</Text>
+                {card.route === '/psalms'
+                  ? <View style={{ marginBottom: 6 }}><Harp size={24} color={Colors.purple600} /></View>
+                  : <Text style={styles.cardIcon}>{card.icon}</Text>}
                 <Text style={[styles.cardLabel, { color: th.text }]}>{card.label}</Text>
                 <Text style={[styles.cardSub, { color: th.textThird }]}>{card.sub}</Text>
               </TouchableOpacity>

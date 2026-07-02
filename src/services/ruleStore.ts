@@ -2,10 +2,9 @@
 // The user's personal prayer rule (Canon), ideally set with their father of
 // confession. Configurable per day of the week and persisted on-device.
 
-import * as SQLite from 'expo-sqlite';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const DB_NAME = 'nepsis_rule.db';
-let _db: SQLite.SQLiteDatabase | null = null;
+const KEY = 'nepsis.rule';
 
 // ─── Option lists ─────────────────────────────────────────────────────────────
 
@@ -67,22 +66,11 @@ export const DEFAULT_RULE: RuleConfig = {
 
 // ─── Persistence ──────────────────────────────────────────────────────────────
 
-async function getDB(): Promise<SQLite.SQLiteDatabase> {
-  if (_db) return _db;
-  _db = await SQLite.openDatabaseAsync(DB_NAME);
-  await _db.execAsync(`
-    PRAGMA journal_mode = WAL;
-    CREATE TABLE IF NOT EXISTS rule_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-  `);
-  return _db;
-}
-
 export async function loadRule(): Promise<RuleConfig> {
-  const db = await getDB();
-  const row = await db.getFirstAsync<{ value: string }>(`SELECT value FROM rule_kv WHERE key = 'rule'`);
-  if (!row) return DEFAULT_RULE;
   try {
-    const parsed = JSON.parse(row.value);
+    const raw = await AsyncStorage.getItem(KEY);
+    if (!raw) return DEFAULT_RULE;
+    const parsed = JSON.parse(raw);
     // Merge with defaults so older saves don't break on new fields.
     const days: DayPlan[] = Array.from({ length: 7 }, (_, i) => ({
       hours: parsed.days?.[i]?.hours ?? [],
@@ -95,6 +83,5 @@ export async function loadRule(): Promise<RuleConfig> {
 }
 
 export async function saveRule(rule: RuleConfig): Promise<void> {
-  const db = await getDB();
-  await db.runAsync(`INSERT OR REPLACE INTO rule_kv (key, value) VALUES ('rule', ?)`, [JSON.stringify(rule)]);
+  try { await AsyncStorage.setItem(KEY, JSON.stringify(rule)); } catch {}
 }
