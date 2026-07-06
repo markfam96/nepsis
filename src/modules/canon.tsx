@@ -14,6 +14,7 @@ import {
   AGPEYA_HOURS, SERVICES, CONFESSION_OPTIONS, FAST_UNTIL_OPTIONS, WEEKDAYS,
 } from '../services/ruleStore';
 import { isFastDay, prostrationsAllowed } from '../utils/fasting';
+import ScrollPicker from '../components/ScrollPicker';
 
 const hourName = (k: string) => AGPEYA_HOURS.find(h => h.key === k)?.name ?? k;
 const serviceName = (k: string) => SERVICES.find(s => s.key === k)?.name ?? k;
@@ -126,12 +127,11 @@ export default function CanonBody() {
 
         {/* Fasting */}
         <View style={[s.card, { borderColor: th.border }]}>
-          <Text style={[s.cardTitle, { color: th.text }]}>Fast until (on fasting days)</Text>
-          <View style={[s.chipRow, { flexWrap: 'wrap' }]}>
-            {FAST_UNTIL_OPTIONS.map(opt => (
-              <Chip key={opt} label={opt} on={rule.fastUntil === opt} onPress={() => update({ ...rule, fastUntil: opt })} th={th} />
-            ))}
+          <View style={s.cardHead}>
+            <Text style={[s.cardTitle, { color: th.text }]}>Fast until (on fasting days)</Text>
+            <Text style={[s.cardTitle, { color: Colors.purple600 }]}>{rule.fastUntil}</Text>
           </View>
+          <ScrollPicker options={FAST_UNTIL_OPTIONS} value={rule.fastUntil} onChange={v => update({ ...rule, fastUntil: v })} th={th} />
           <Text style={[s.fieldNote, { color: th.textThird, marginTop: 4 }]}>
             Wednesdays and Fridays are fasting days automatically, except during the Holy Fifty.
           </Text>

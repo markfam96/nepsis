@@ -30,8 +30,19 @@ export const CONFESSION_OPTIONS = [
   'Weekly', 'Every 2 weeks', 'Monthly', 'Every 2 months', 'Quarterly', 'Twice a year',
 ];
 
-// On fasting days, abstain from food until this time of day.
-export const FAST_UNTIL_OPTIONS = ['9:00 AM', '12:00 PM', '3:00 PM', '6:00 PM', 'Sunset'];
+// On fasting days, abstain from food until this time of day — every half hour.
+function genTimeOptions(): string[] {
+  const out: string[] = [];
+  for (let h = 0; h < 24; h++) {
+    for (const m of [0, 30]) {
+      const period = h < 12 ? 'AM' : 'PM';
+      const hr = h % 12 === 0 ? 12 : h % 12;
+      out.push(`${hr}:${m === 0 ? '00' : '30'} ${period}`);
+    }
+  }
+  return out;
+}
+export const FAST_UNTIL_OPTIONS = genTimeOptions();
 
 export const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
