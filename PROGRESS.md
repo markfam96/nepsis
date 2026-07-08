@@ -25,8 +25,9 @@ with a Byzantine visual identity.
 - **Navigation:** a left-swipe **drawer** (not bottom tabs). Routes in
   `app/(drawer)/`: `index` (Home), `stillness` (Watchfulness), `psalms`,
   `scripture` (Reading Plans), `rule` (Canon), `confession`. Root
-  `app/_layout.tsx` holds the auth gate (PIN → lock → app; re-lock after 60s
-  backgrounded) and renders the drawer when unlocked.
+  `app/_layout.tsx` now renders the drawer **directly** — the app opens straight
+  to Home with no launch gate. Authentication guards **only the Confession
+  section** (see decision below).
 - **Screen scaffold:** `src/components/SectionScreen.tsx` gives each destination
   a gold header + ☰ drawer button + optional segmented switcher. Feature UIs
   live as embeddable bodies in `src/modules/` and are composed by the routes.
@@ -39,8 +40,23 @@ with a Byzantine visual identity.
   components; emoji for section cards (candle, praying hands, dove, book).
 - **Persistence — AsyncStorage, not SQLite.** SQLite (`expo-sqlite`) writes were
   failing *silently* in Expo Go, so progress didn't survive restarts. All stores
-  (`psalmStore`, `planStore`, `ruleStore`) now use AsyncStorage with the same
-  APIs. (`localDB.ts` confession journal still uses SQLite — unused/untested.)
+  (`psalmStore`, `planStore`, `ruleStore`, and now `journalStore` +
+  `examinationStore`) use AsyncStorage with the same APIs. The old SQLite
+  `localDB.ts` confession journal is fully retired (dead code).
+- **Confession is locked as one section, not per-screen.** `SectionLock` (in
+  `src/modules/confession.tsx`) gates the whole section — unlock once to reach
+  the journal, examination, and in-session notes together. First entry **creates
+  a 6-digit passcode**; returning entries use **Face ID or that passcode**
+  (Hermes-safe hashing via `expo-crypto`, stored in `expo-secure-store`).
+  Removing the app-open gate meant setup had to move here. Existing users who
+  already set a PIN keep it seamlessly (`hasPINSet()`).
+- **Examination + journal both feed the confession notes.** The examination of
+  conscience (used daily / before confession) and the journal (big things +
+  notes) are two inputs; the in-session notes screen **merges both**, grouped by
+  the six domains. Journal incidents can also be filed under **"Other"**, and
+  each catalogue-linked entry carries the **same explanation (description +
+  scripture)** shown in the examination. Permanent delete after confession
+  clears **both** stores completely.
 - **Psalter source:** public-domain **Brenton Septuagint (LXX)** could not be
   used directly — instead the actual **Coptic Agpeya** text was extracted from a
   provided PDF into `src/data/agpeyaPsalms.json` (77 psalms, LXX numbering,
@@ -59,9 +75,11 @@ with a Byzantine visual identity.
 ## Feature status
 
 ### Built & working
-- **Auth gate** — 6-digit PIN setup, lock screen, 60s background re-lock. No
-  device-passcode fallback (biometrics don't auto-prompt; Face ID needs a dev
-  build — Expo Go can't do it).
+- **Confession-section lock** — the app opens with no gate; entering Confession
+  requires a **6-digit passcode or Face ID**, set the first time you open the
+  section. One unlock covers the journal, examination, and notes. (Face ID needs
+  a dev build — Expo Go falls back to the passcode.) The old app-launch lock
+  screens (`src/screens/LockScreen.tsx`, `SetupPINScreen.tsx`) are now unused.
 - **Home hub** — Coptic date (offline via `utils/copticDate.ts`), verse of the
   day, section navigation cards.
 - **Psalms memorization** (the deepest feature):
@@ -81,11 +99,20 @@ with a Byzantine visual identity.
   persisted progress.
 - **Canon → Prayer Rule** — fully editable per day of week: Agpeya hours,
   church services, prostrations, quiet time, Bible reading, spiritual book,
-  confession frequency, and "fast until" time. Auto Wed/Fri fasting (except
-  Holy Fifty); no prostrations on Sat/Sun/Holy Fifty. Today view generated from
-  the rule.
-- **Confession** — hub → journal (behind re-auth) → examination of conscience
-  (6 categories) → in-session checklist → completion. UI-complete.
+  confession frequency, and "fast until" time (a **scroll picker** over every
+  half-hour with AM/PM). Auto Wed/Fri fasting (except Holy Fifty); no
+  prostrations on Sat/Sun/Holy Fifty. Today view generated from the rule.
+- **Confession** — now functional end-to-end, not just UI:
+  - **Journal** — log incidents by the six examination domains plus **"Other"**,
+    each with an optional free-text note; catalogue-linked entries show the same
+    description + scripture as the examination. Persisted (`journalStore`).
+    Keyboard is dismissible (drag / Done); long notes show in full.
+  - **Examination of conscience** — 6 categories with per-item frequency; now
+    **persisted** (`examinationStore`) so it builds up across the period.
+  - **In-session notes** — merges examination items + journal incidents grouped
+    by domain; tap to check off as spoken.
+  - **Completion** — permanently deletes both stores; step 3 is a reminder to
+    update the Canon (nothing in the Canon is auto-reset).
 - **Watchfulness** — Stillness timer, Feeling (Scripture + patristic comfort),
   Anchor verse (with free-text option + breath mode).
 
@@ -93,8 +120,6 @@ with a Byzantine visual identity.
 - **Screen Time** — shows simulated data. Reading other apps' usage is blocked
   in Expo Go and heavily restricted on iOS (see below). Left as-is by decision.
 - **Feeling / Anchor / verse-of-the-day** content is a static curated set.
-- **Confession journal** persistence (`localDB.ts` / SQLite) is unused; would
-  need the same AsyncStorage treatment (or SQLCipher) before real use.
 - **Supabase** client exists (`services/supabase.ts`) but no backend sync is wired.
 
 ---
@@ -124,13 +149,14 @@ with a Byzantine visual identity.
 3. **Notifications / reminders** — daily prayer-rule and psalm-review reminders.
 4. **Fuller liturgical calendar** — the long fasts and feasts, Coptic
    synaxarion, live daily lectionary link (Coptic Reader).
-5. **Confession journal** — wire real encrypted persistence; connect the
-   spiritual-father account role (`UserProfile.spiritualFatherId` exists in
-   types) for booking/sharing.
+5. **Confession** — journal + examination persistence is done (AsyncStorage).
+   Remaining: **encryption at rest** (SQLCipher / secure-store-wrapped key) for
+   the sensitive stores, and connecting the spiritual-father account role
+   (`UserProfile.spiritualFatherId` exists in types) for booking/sharing.
 6. **Backend (optional)** — Supabase sync for multi-device + the priest ↔ user
    relationship, if the app goes beyond single-device.
 
 ---
 
-*Repo has 9 commits; latest: split psalm Review/Learn buttons. All work is local
-(no remote configured).*
+*Repo has 11 commits; latest: confession journal, section-wide lock, and Canon
+fast-until picker. All work is local (no remote configured).*
