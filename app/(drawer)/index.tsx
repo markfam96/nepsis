@@ -20,11 +20,11 @@ const VERSE_OF_DAY = {
 };
 
 const SECTIONS = [
-  { route: '/stillness',  icon: '🕯️', label: 'Watchfulness',  sub: 'Prayer · feeling · anchor' },
   { route: '/psalms',     icon: '🎵', label: 'Psalms',        sub: 'Memorize the Psalter'      },
-  { route: '/scripture',  icon: '📖', label: 'Reading Plans', sub: 'Read & track the Bible'    },
-  { route: '/rule',       icon: '🙏', label: 'Canon',         sub: 'Prayer rule · screen time' },
   { route: '/confession', icon: '🕊', label: 'Confession',    sub: 'Examine · journal · log'   },
+  { route: '/rule',       icon: '🙏', label: 'Canon',         sub: 'Prayer rule · screen time' },
+  { route: '/stillness',  icon: '🕯️', label: 'Watchfulness',  sub: 'Prayer · feeling · anchor' },
+  { route: '/scripture',  icon: '📖', label: 'Reading Plans', sub: 'Read & track the Bible'    },
 ] as const;
 
 export default function HomeHub() {
